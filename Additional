@@ -1,0 +1,121 @@
+import logging
+ 
+import os
+ 
+from webbrowser import get
+ 
+from dotenv import load_dotenv
+ 
+ 
+from livekit.agents import Agent, AgentSession, JobContext, WorkerOptions, cli, mcp, ChatContext
+ 
+from livekit.plugins import deepgram, openai, silero, azure
+ 
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
+ 
+from langchain_mcp_adapters.client import MultiServerMCPClient
+ 
+from langgraph.prebuilt import create_react_agent
+ 
+from langchain_openai import AzureChatOpenAI
+ 
+from livekit.plugins import langchain
+ 
+ 
+logger = logging.getLogger("mcp-agent")
+ 
+load_dotenv('../.env')
+ 
+ 
+ 
+class MyAgent(Agent):
+ 
+    def __init__(self) -> None:
+ 
+        super().__init__(
+ 
+            instructions=(
+ 
+                "You are MCP Sentinel, a voice-based agent that interacts with the MCP server. "
+ 
+                "You can retrieve data via the MCP server. The interface is voice-based: "
+ 
+                "accept spoken user queries and respond with synthesized speech."
+ 
+            ),
+ 
+        )
+ 
+ 
+    async def on_enter(self):
+ 
+        # Generate an initial response when the agent joins
+ 
+        await self.session.generate_reply()
+ 
+ 
+ 
+async def entrypoint(ctx: JobContext):
+ 
+    session = AgentSession(
+ 
+        vad=silero.VAD.load(),
+ 
+        stt=azure.STT(
+ 
+            speech_region=os.getenv("AZURE_SPEECH_REGION"),
+ 
+            speech_auth_token=os.getenv("AZURE_SPEECH_AUTH_TOKEN"),
+ 
+        ),
+ 
+        llm=openai.LLM.with_azure(
+ 
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+ 
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+ 
+            api_version="2024-10-01-preview",
+ 
+        ),
+ 
+        # llm = await create_agent(),
+ 
+        tts=azure.TTS(
+ 
+            speech_region=os.getenv("AZURE_SPEECH_REGION"),
+ 
+            speech_auth_token=os.getenv("AZURE_SPEECH_AUTH_TOKEN"),
+ 
+        ),
+ 
+        turn_detection=MultilingualModel(),
+ 
+        # ✅ Enable MCP servers
+ 
+        mcp_servers=[
+ 
+            mcp.MCPServerHTTP(
+ 
+                url     = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp/"),
+ 
+                headers = {"Authorization": f"Bearer {os.getenv('MCP_AUTH_TOKEN')}"},
+ 
+                timeout = 60,
+ 
+                client_session_timeout_seconds = 60,
+ 
+            )
+ 
+        ],
+ 
+    )
+ 
+ 
+    await session.start(agent=MyAgent(), room=ctx.room)
+ 
+ 
+ 
+if __name__ == "__main__":
+ 
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
